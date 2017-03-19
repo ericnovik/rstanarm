@@ -24,9 +24,9 @@
 stanjm <- function(object) {
   
   opt        <- object$algorithm == "optimizing"
-  mer        <- rep(1L, object$M)
+  M          <- length(object$y_mod_stuff)
+  mer        <- rep(1L, M)
   stanfit    <- object$stanfit
-  M          <- object$M
 
   if (opt) {
     stop("Optimisation not implemented for stan_jm")
@@ -63,15 +63,19 @@ stanjm <- function(object) {
   }
   
   # Linear predictor, fitted values
-  y_eta <- lapply(1:M, function(m) linear_predictor.default(y_coefs[[m]], object$x[[m]], object$offset))
-  y_mu  <- lapply(1:M, function(m) object$family[[m]]$linkinv(y_eta[[m]]))
+  y_eta <- lapply(1:M, function(m) 
+    linear_predictor.default(y_coefs[[m]], object$y_mod_stuff[[m]]$x, 
+                             object$y_mod_stuff[[m]]$offset))
+  y_mu  <- lapply(1:M, function(m) 
+    object$family[[m]]$linkinv(y_eta[[m]]))
 
   # Residuals
-  y_tmp <- lapply(1:M, function(m) if (is.factor(object$y[[m]])) fac2bin(object$y[[m]]) else object$y[[m]])
+  y_tmp <- lapply(1:M, function(m) 
+    if (is.factor(object$y_mod_stuff[[m]]$y)) fac2bin(object$y_mod_stuff[[m]]$y) else object$y_mod_stuff[[m]]$y)
   y_residuals <- lapply(1:M, function(m) y_tmp[[m]] - y_mu[[m]])
 
   # Observation labels
-  y_nms      <- lapply(object$y, names)
+  y_nms <- lapply(1:M, function(m) names(object$y_mod_stuff[[m]]$y))
   for (m in 1:M) {
     names(y_eta[[m]]) <- names(y_mu[[m]]) <- names(y_residuals[[m]]) <- y_nms[[m]]
   }
@@ -91,21 +95,21 @@ stanjm <- function(object) {
     linear.predictors = list_nms(y_eta, M),
     residuals         = list_nms(y_residuals, M), 
     covmat            = covmat,
-    n_events          = sum(object$d > 0),
-    n_markers         = object$M,
-    n_subjects        = object$n_subjects,
-    n_grps            = object$n_grps,
-    n_yobs            = object$n_yobs,
+    n_events          = sum(object$e_mod_stuff$d > 0),
+    n_markers         = length(object$y_mod_stuff),
+    n_subjects        = object$e_mod_stuff$Npat,
+    n_grps            = attr(object$stanfit, "n_grps"),
+    n_yobs            = fetch_(object$y_mod_stuff, "N"),
     id_var            = object$id_var,
     time_var          = object$time_var,
     cnms              = object$cnms, 
     dataLong          = object$dataLong,
     dataEvent         = object$dataEvent,
-    eventtime         = object$eventtime, 
-    status            = object$d,   
+    eventtime         = object$e_mod_stuff$eventtime, 
+    status            = object$e_mod_stuff$d,   
     quadnodes         = object$quadnodes,
-    y                 = object$y,
-    fr                = list_nms(object$fr, M),
+    y                 = list_nms(fetch(object$y_mod_stuff, "y")),
+    #fr                = list_nms(object$fr, M),
     #   offset = if (any(object$offset != 0)) object$offset else NULL,
     #   contrasts = object$contrasts, 
     prior.weights     = object$weights, 
@@ -114,15 +118,15 @@ stanjm <- function(object) {
     formula           = list_nms(object$formula, M), 
     family            = list_nms(object$family, M), 
     assoc             = object$assoc,
-    epsilon           = object$epsilon,
+    epsilon           = attr(object$a_mod_stuff, "epsilon"),
     basehaz           = object$basehaz,
-    prior.info        = object$prior.info,
+    prior.info        = attr(object$stanfit, "prior.info"),
     algorithm         = object$algorithm,
     runtime           = times,
-    glmod_stuff       = object$glmod_stuff,
-    coxmod_stuff      = object$coxmod_stuff,    
-    glmod             = object$glmod,
-    coxmod            = object$coxmod,
+    glmod_stuff       = list_nms(object$y_mod_stuff),
+    coxmod_stuff      = object$e_mod_stuff,    
+    glmod             = list_nms(fetch(object$y_mod_stuff, "mod")),
+    coxmod            = object$e_mod_stuff$mod,
     stan_summary, stanfit
   )
   
