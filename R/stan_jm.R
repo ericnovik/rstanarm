@@ -3030,82 +3030,36 @@ rename_t_and_cauchy <- function(prior_stuff, has) {
 
 #--------------- Functions related to generating initial values
 
-# Create a function that can be used to generate the model-based initial values for Stan
+# Create a function that can be used to generate model-based initial values
 #
-# @param y_mod_stuff A list, with each element containing the list object returned by
-#   a call to the handle_glmod function
-# @param e_mod_stuff A list object returned by a call to the handle_coxmod function
+# @param y_mod_stuff A list, with each element containing the list object 
+#   returned by a call to handle_glmod
+# @param e_mod_stuff A list object returned by a call to handle_coxmod
 # @param standata The data list that will be passed to Stan
 generate_init_function <- function(y_mod_stuff, e_mod_stuff, standata) {
   
-  # Initial values for intercepts, coefficients and aux parameters
-  est <- lapply(y_mod_stuff, function(x) summary(x$mod)$coefficients[, "Estimate"])
-  xbar      <- fetch(y_mod_stuff, "xbar")
-  gamma     <- lapply(seq_along(y_mod_stuff), function(m) 
-    return_intercept(est[[m]]) - xbar[[m]] %*% drop_intercept(est[[m]]))
+  coefs <- lapply(y_mod_stuff, extract_glmod_coefs)
+  aux   <- lapply(y_mod_stuff, extract_glmod_sigma)
+  alpha <- lapply(coefs, return_intercept)
+  beta  <- lapply(coefs, drop_intercept)
+  xbar  <- lapply(y_mod_stuff, `[[`, "xbar")
+  gamma <- mapply(shift_intercept, alpha, xbar, beta, SIMPLIFY = FALSE)
   gamma_nob <- gamma[as.logical(standata$has_intercept_nob)]
   gamma_lob <- gamma[as.logical(standata$has_intercept_lob)]
   gamma_upb <- gamma[as.logical(standata$has_intercept_upb)]
-  beta      <- lapply(est, drop_intercept)
-  aux       <- lapply(y_mod_stuff, function(x) sigma(x$mod))
-  e_beta    <- e_mod_stuff$mod$coef
-  e_aux     <- if (standata$basehaz_type == 1L) runif(1, 0.5, 3) else rep(0, standata$basehaz_df)
-  z_beta        <- standardise_coef(unlist(beta), standata$prior_mean,           standata$prior_scale)
-  aux_unscaled  <- standardise_coef(unlist(aux),  standata$prior_mean_for_aux,   standata$prior_scale_for_aux)
-  aux_unscaled  <- aux_unscaled[as.logical(standata$has_aux)] # only keep aux where relevant
-  e_z_beta      <- standardise_coef(e_beta,       standata$e_prior_mean,         standata$e_prior_scale) 
-  e_aux_unscaled<- standardise_coef(e_aux,        standata$e_prior_mean_for_aux, standata$e_prior_scale_for_aux)
-  b_Cov         <- lapply(y_mod_stuff, function(x) lme4::VarCorr(x$mod)[[1L]])
-  sel           <- sapply(y_mod_stuff, function(x) length(lme4::VarCorr(x$mod)) > 1L)
-  if (any(sel)) stop("Model-based initial values cannot yet be used with more ",
-                     "than one clustering level.", call. = FALSE)
- 
-  # Initial values for random effects distribution
-  scale <- standata$scale
-  t     <- standata$t
-  p     <- standata$p
-
-  # Cholesky decomp of b_Cov combined across all submodel
-  L_b_Cov         <- t(suppressWarnings(chol(as.matrix(Matrix::bdiag(b_Cov)), pivot = TRUE))) 
-  diag_L_b_Cov    <- diag(L_b_Cov)
+  e_beta <- e_mod_stuff$mod$coef
+  e_aux  <- if (standata$basehaz_type == 1L) 
+    runif(1, 0.5, 3) else rep(0, standata$basehaz_df)
+  z_beta <- standardise_coef(
+    unlist(beta), standata$prior_mean, standata$prior_scale)
+  aux_unscaled <- standardise_coef(
+    unlist(aux), standata$prior_mean_for_aux, standata$prior_scale_for_aux)
+  e_z_beta <- standardise_coef(
+    e_beta, standata$e_prior_mean, standata$e_prior_scale) 
+  e_aux_unscaled <- standardise_coef(
+    e_aux, standata$e_prior_mean_for_aux, standata$e_prior_scale_for_aux)
+  aux_unscaled <- aux_unscaled[as.logical(standata$has_aux)]
   
-  # Dimensions
-  len_z_T <- 0
-  for (i in 1:t) {
-    if (p[i] > 2) 
-      for (j in 3:p[i]) len_z_T <- len_z_T + p[i] - 1;
-  }
-  len_rho <- ifelse((sum(p) - t) > 0, sum(p) - t, 0)
-
-  # Construct initial values for theta_L matrix
-  # ** Much room for improvement here! **
-  tau              <- c()
-  rho              <- c()
-  normalised_zetas <- c()
-  rho_mark         <- 1
-  for (i in 1:t) {
-    trace <- sum(diag_L_b_Cov)  # equal to variance of RE if only one RE
-    normalised_zetas_tmp <- diag_L_b_Cov / trace  # equal to 1 if only one random effect
-    tau[i] <- (sqrt(trace / p[i])) / scale[i]
-    std_dev1 <- sqrt(L_b_Cov[1,1])
-    if (p[i] > 1) {
-      std_dev2 <- sqrt(L_b_Cov[2,2])
-      T21 <- L_b_Cov[2,1] / std_dev2
-      rho[rho_mark] <- (T21 + 1) / 2
-      rho_mark <- rho_mark + 1
-      normalised_zetas <- c(normalised_zetas, normalised_zetas_tmp)
-    }
-  }
-  
-  # Parameters related to priors
-  len_global <- sum((2 * (standata$prior_dist == 3)) + (4 * (standata$prior_dist == 4)))
-  len_local2 <- sum((standata$prior_dist == 3) * standata$KM) 
-  len_local4 <- sum((standata$prior_dist == 4) * standata$KM)
-  len_mix   <- sum((standata$prior_dist %in% c(5,6)) * standata$KM)
-  len_ool <- sum(standata$prior_dist == 6)
-  len_noise <- sum((standata$family == 8) * standata$NM)
-    
-  # Function to generate model based initial values
   model_based_inits <- Filter(function(x) (!is.null(x)), list(
     gamma_nob      = array_else_double(gamma_nob),
     gamma_lob      = array_else_double(gamma_lob),
@@ -3113,28 +3067,7 @@ generate_init_function <- function(y_mod_stuff, e_mod_stuff, standata) {
     z_beta         = array_else_double(z_beta),
     aux_unscaled   = array_else_double(aux_unscaled),
     e_z_beta       = array_else_double(e_z_beta),
-    e_aux_unscaled = array_else_double(e_aux_unscaled),
-    e_gamma  = array_else_double(rep(0, standata$e_has_intercept)),
-    a_z_beta = array_else_double(rep(0, standata$a_K)),
-    z_b      = array_else_double(runif(standata$q, -0.5, 0.5)),
-    global   = array_else_double(runif(len_global)),
-    e_global = array_else_double(runif(get_nvars_for_hs(standata$e_prior_dist))),
-    a_global = array_else_double(runif(get_nvars_for_hs(standata$a_prior_dist))),
-    local2   = matrix_of_uniforms(nrow = 2, ncol = len_local2),
-    local4   = matrix_of_uniforms(nrow = 4, ncol = len_local4),
-    e_local  = matrix_of_uniforms(nrow = get_nvars_for_hs(standata$e_prior_dist), ncol = standata$e_K),
-    a_local  = matrix_of_uniforms(nrow = get_nvars_for_hs(standata$a_prior_dist), ncol = standata$a_K),
-    mix   = if (len_mix > 0) matrix(rep(1, len_mix), 1, len_mix) else matrix(0,0,0),
-    e_mix = if (standata$e_prior_dist %in% c(5,6)) matrix(rep(1, standata$e_K), 1, standata$e_K) else matrix(0,0,standata$e_K),
-    a_mix = if (standata$a_prior_dist %in% c(5,6)) matrix(rep(1, standata$a_K), 1, standata$a_K) else matrix(0,0,standata$a_K),
-    ool   = if (len_ool > 0) as.array(len_ool) else as.array(double(0)), 
-    e_ool = if (standata$e_prior_dist == 6) as.array(1) else as.array(double(0)), 
-    a_ool = if (standata$a_prior_dist == 6) as.array(1) else as.array(double(0)),
-    noise = if (len_noise > 0) matrix(runif(len_noise), 1, len_noise) else matrix(0,0,0),
-    z_T   = array_else_double(rep(sqrt(1 / len_z_T), len_z_T)),
-    rho   = array_else_double(rep(1 / (len_rho + 1), len_rho)),
-    zeta  = array_else_double(normalised_zetas),
-    tau   = array_else_double(tau)))
+    e_aux_unscaled = array_else_double(e_aux_unscaled)))
   
   return(function() model_based_inits)
 }
@@ -3320,6 +3253,15 @@ array_else_double <- function(x)
 matrix_of_uniforms <- function(nrow = 0, ncol = 0)
   if (nrow == 0 || ncol == 0) matrix(0,0,0) else matrix(runif(nrow * ncol), nrow, ncol)
 
+# Shift intercept based on means of the predictors
+shift_intercept <- function(alpha, betas, xbar)
+  return(alpha - xbar %*% betas) 
+
+# Extract coefficients and sigma from a glmod object
+extract_glmod_coefs <- function(glmod)
+  return(summary(glmod$mod)$coefficients[, "Estimate"])
+extract_glmod_sigma <- function(glmod)
+  return(sigma(glmod$mod))
 
 
 
