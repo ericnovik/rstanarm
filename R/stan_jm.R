@@ -1184,6 +1184,12 @@ stan_jm <- function(formulaLong, dataLong, formulaEvent, dataEvent, time_var,
             "mean_PPD")
             
   cat(paste0(if (M == 1L) "Uni" else "Multi", "variate joint model specified\n"))
+  
+  cat("Writing out the data file...\n")
+  dir_name <- paste0("~/stan-jm-data-", 
+                    gsub(" ", "-", Sys.time()))
+  saveRDS(standata, dir_name)
+  
   if (algorithm == "sampling") {
     cat("\nPlease note the warmup phase may be much slower than",
         "later iterations!\n")             
