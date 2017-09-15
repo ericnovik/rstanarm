@@ -1212,6 +1212,13 @@ stan_jm <- function(formulaLong, dataLong, formulaEvent, dataEvent, time_var,
   }
   check_stanfit(stanfit)
   
+  cat("Writing out Stan code...\n")
+  stan_code <- get_stancode(stanfit)
+  sink(paste0(dir_name, "/stan_jm_code.stan"))
+  cat(stan_code)
+  cat("\n")
+  sink()
+  
   # Names for pars
   y_nms <- unlist(lapply(1:M, function(m) 
     if (ncol(y_mod_stuff[[m]]$xtemp)) paste0("Long", m, "|", colnames(y_mod_stuff[[m]]$xtemp))))
