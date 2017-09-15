@@ -1188,7 +1188,9 @@ stan_jm <- function(formulaLong, dataLong, formulaEvent, dataEvent, time_var,
   cat("Writing out the data file...\n")
   dir_name <- paste0("~/stan-jm-data-", 
                     gsub(" ", "-", Sys.time()))
-  saveRDS(standata, dir_name)
+  system(paste("mkdir", dir_name))
+  standata <- runif(100)
+  saveRDS(standata, paste0(dir_name, "/stan_jm_data.rds"))
   
   if (algorithm == "sampling") {
     cat("\nPlease note the warmup phase may be much slower than",
